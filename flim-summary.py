@@ -1,5 +1,6 @@
 import os  # Import OS for cwd, mkdir
 import numpy as np
+import pandas as pd
 import logging
 
 LOG_MSGFORMAT = "%(asctime)s - %(message)s"
@@ -53,13 +54,23 @@ def parseFilenames(fileList: list) -> list:
 
 
 class Measurement:
-    def __init__(self, path: str):
+    def __init__(self, path: str, variable):
         self.Path = path
+        self.Parent = variable
 
     @property
     def Filename(self):
         path = os.path.split(self.Path)
         return path[-1]
+
+    @property
+    def Name(self):
+        """
+        Return the name of the measurement.
+        TODO: maybe hardcode name of measurement into class
+        """
+        filenameparts = self.Filename.split("_")
+        return "_".join(filenameparts[0:-2])
 
     def loadData(self):
         """Loads ASCII File into NumPy Array"""
@@ -77,14 +88,20 @@ class Measurement:
 
 
 class Variable:
-    def __init__(self, var: str):
-        self.Var = var
+    def __init__(self, var: str, channel):
+        self.Name = var
+        self.Parent = channel
         self.Measurements = list()
+
+    def values(self):
+        """Return list of single values of the measurements"""
+        return [measurement.mean() for measurement in self.Measurements]
 
 
 class Channel:
-    def __init__(self, ch: str):
-        self.Ch = ch
+    def __init__(self, ch: str, project):
+        self.Name = ch
+        self.Parent = project
         self.Variables = list()
 
 
@@ -125,7 +142,7 @@ class Project:
         for ch in channelsSet:
 
             # Add channel to project
-            chobj = Channel(ch)
+            chobj = Channel(ch, self)
             self.Channels.append(chobj)
 
             # Create directory for channel
@@ -141,7 +158,7 @@ class Project:
             for var in varsInChannel:
 
                 # Add variable to channel
-                varobj = Variable(var)
+                varobj = Variable(var, chobj)
                 chobj.Variables.append(varobj)
 
                 # Create directory for every variable in channel
@@ -170,14 +187,20 @@ class Project:
                     source = target
 
                     # Add measurement to Variable
-                    measobj = Measurement(source)
+                    measobj = Measurement(source, varobj)
                     varobj.Measurements.append(measobj)
 
         # Load data into measurements
         print("Found {} measurements. Loading data...".format(len(self.Measurements)))
-        for meas in self.Measurements:
-            meas.loadData()
-            print("Loaded " + meas.Filename)
+        for measurement in self.Measurements:
+            measurement.loadData()
+            print(
+                "Loaded ({0}) ({1}) ({2})".format(
+                    measurement.Parent.Parent.Name,
+                    measurement.Parent.Name,
+                    measurement.Filename,
+                )
+            )
 
     def getFileList(self, path=".", extension=".asc") -> bool:
         # Get list of files
@@ -197,6 +220,31 @@ class Project:
 
         return False
 
+    def exportSummary(self, path="."):
+        """Export a summary of all variables"""
+
+        index = list(set([measurement.Name for measurement in self.Measurements]))
+
+        d = dict()
+        for channel in self.Channels:
+            for variable in self.Channels[0].Variables:
+                d[channel.Name + "-" + variable.Name] = variable.values()
+
+        df = pd.DataFrame(d, index=index)
+
+        print("Summary Table created:")
+        print(df)
+
+        print("Exporting to Excel Files...")
+        try:
+            sourcefile = os.path.join(".", "export.xlsx")
+            df.to_excel(sourcefile, sheet_name="Sheet1")
+            print("Successfully exported to excel")
+        except:
+            print("FAILED")
+
+        pass
+
 
 if __name__ == "__main__":
     """MAIN"""
@@ -207,4 +255,5 @@ if __name__ == "__main__":
     # Create Project Object and Load Data
     project = Project(path, extension, moveFiles=False)
 
+    project.exportSummary(".")
     pass
