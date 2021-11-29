@@ -1,5 +1,6 @@
 import os  # Import OS for cwd, mkdir
 import numpy as np
+from numpy.core.numeric import NaN
 import pandas as pd
 import logging
 
@@ -72,19 +73,29 @@ class Measurement:
         filenameparts = self.Filename.split("_")
         return "_".join(filenameparts[0:-2])
 
+    @property
+    def cleandata(self):
+        """Omitting 0s and max intensity values"""
+        maxval = np.max(self.Data)
+        return np.where((self.Data == 0) | (self.Data == maxval), np.NaN, self.Data)
+
     def loadData(self):
         """Loads ASCII File into NumPy Array"""
         data = np.loadtxt(self.Path)
         self.Data = data
 
     def max(self):
-        return np.max(self.Data)
+        """Return maximum value, while omitting 0s and max intensity values"""
+        return np.nanmax(self.cleandata)
 
     def min(self):
-        return np.max(self.Data)
+        return np.nanmin(self.cleandata)
 
     def mean(self):
-        return np.mean(self.Data)
+        return np.nanmean(self.cleandata)
+
+    def std(self):
+        return np.nanstd(self.cleandata)
 
 
 class Variable:
@@ -93,9 +104,13 @@ class Variable:
         self.Parent = channel
         self.Measurements = list()
 
-    def values(self):
+    def means(self):
         """Return list of single values of the measurements"""
         return [measurement.mean() for measurement in self.Measurements]
+
+    def stds(self):
+        """Return list of single values of the measurements"""
+        return [measurement.std() for measurement in self.Measurements]
 
 
 class Channel:
@@ -155,7 +170,9 @@ class Project:
             # Get variables in this channel
             varsInChannel = [f[1] for f in parsedFileList if f[0] == ch]
 
-            for var in varsInChannel:
+            unique_variables = list(set(varsInChannel))
+
+            for var in unique_variables:
 
                 # Add variable to channel
                 varobj = Variable(var, chobj)
@@ -175,16 +192,17 @@ class Project:
                 # Move files to subdirectories and append measurements to Variable objects
                 for filename in filesToMove:
                     source = os.path.join(path, filename)
-                    target = os.path.join(path, ch, var, filename)
 
                     if moveFiles:
+                        target = os.path.join(path, ch, var, filename)
+
                         try:
                             os.rename(source, target)
                             pass
                         except:
-                            pass
-
-                    source = target
+                            logging.warning("Could not move file: {}".format(source))
+                        else:
+                            source = target
 
                     # Add measurement to Variable
                     measobj = Measurement(source, varobj)
@@ -225,23 +243,36 @@ class Project:
 
         index = list(set([measurement.Name for measurement in self.Measurements]))
 
+        logging.debug("Index length: {0:d}".format(len(index)))
+
         d = dict()
         for channel in self.Channels:
             for variable in self.Channels[0].Variables:
-                d[channel.Name + "-" + variable.Name] = variable.values()
+                d[channel.Name + "-" + variable.Name] = variable.means()
 
-        df = pd.DataFrame(d, index=index)
+        logging.debug("Highest number of measurements: {0:d}".format(len(d)))
+
+        try:
+            df = pd.DataFrame(d, index=index)
+        except:
+            logging.error(
+                'Index does not match number of measurements. Check for ambiguous file naming, such as "-Ch1-Ch2-"'
+            )
+            return
 
         print("Summary Table created:")
         print(df)
 
+        targetfile = os.path.join(path, "export.xlsx")
+
         print("Exporting to Excel Files...")
+        
         try:
-            sourcefile = os.path.join(".", "export.xlsx")
-            df.to_excel(sourcefile, sheet_name="Sheet1")
-            print("Successfully exported to excel")
+            df.to_excel(targetfile, sheet_name="Averages")
         except:
             print("FAILED")
+        else:
+            print("Successfully exported to: {0}".format(targetfile))
 
         pass
 
@@ -249,11 +280,11 @@ class Project:
 if __name__ == "__main__":
     """MAIN"""
 
-    path = r"C:\Dev\python\flim\flim-summary\sampledata\test2"
+    path = r"C:\Dev\python\flim\flim-summary\sampledata\test1"
     extension = ".asc"
 
     # Create Project Object and Load Data
     project = Project(path, extension, moveFiles=False)
 
-    project.exportSummary(".")
+    project.exportSummary(path)
     pass
