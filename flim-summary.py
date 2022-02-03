@@ -59,6 +59,8 @@ class Measurement:
         self.Path = path
         self.Parent = variable
 
+        self.Data = None
+
     @property
     def Filename(self):
         path = os.path.split(self.Path)
@@ -81,8 +83,24 @@ class Measurement:
 
     def loadData(self):
         """Loads ASCII File into NumPy Array"""
+
+        if self.Data is not None:
+            # Data already loaded
+            return
+
         data = np.loadtxt(self.Path)
         self.Data = data
+
+        print(
+            "Loaded ({0}) ({1}) ({2})".format(
+                self.Parent.Parent.Name,
+                self.Parent.Name,
+                self.Filename,
+            )
+        )
+
+    def unload_data(self):
+        self.Data = None
 
     def max(self):
         """Return maximum value, while omitting 0s and max intensity values"""
@@ -104,13 +122,32 @@ class Variable:
         self.Parent = channel
         self.Measurements = list()
 
+    def load_on_request(self, func):
+        # Decorator, load data on request and unload files
+        def wrapper(self):
+            self.load_data(self)
+            func()
+            self.unload_data(self)
+
+        return wrapper
+
+    @load_on_request
     def means(self):
         """Return list of single values of the measurements"""
         return [measurement.mean() for measurement in self.Measurements]
 
+    @load_on_request
     def stds(self):
         """Return list of single values of the measurements"""
         return [measurement.std() for measurement in self.Measurements]
+
+    def load_data(self):
+        for measurement in self.Measurements:
+            measurement.loadData()
+
+    def unload_data(self):
+        for measurement in self.Measurements:
+            measurement.unload_data()
 
 
 class Channel:
@@ -129,6 +166,8 @@ class Project:
 
         # Directly import data
         self.importdata(path, extension, moveFiles)
+
+        self.print_summary()
 
     @property
     def Measurements(self):
@@ -208,17 +247,19 @@ class Project:
                     measobj = Measurement(source, varobj)
                     varobj.Measurements.append(measobj)
 
+    def print_summary(self):
+        # Print summary
+        print("{0:d} measurements.".format(len(self.Measurements)))
+
+        # List variables
+        for channel in self.Channels:
+            variable_names = [var.Name for var in channel.Variables]
+            print("{0} -- {1}".format(channel.Name, ", ".join(variable_names)))
+
+    def load_data(self):
         # Load data into measurements
-        print("Found {} measurements. Loading data...".format(len(self.Measurements)))
         for measurement in self.Measurements:
             measurement.loadData()
-            print(
-                "Loaded ({0}) ({1}) ({2})".format(
-                    measurement.Parent.Parent.Name,
-                    measurement.Parent.Name,
-                    measurement.Filename,
-                )
-            )
 
     def getFileList(self, path=".", extension=".asc") -> bool:
         # Get list of files
@@ -266,7 +307,7 @@ class Project:
         targetfile = os.path.join(path, "export.xlsx")
 
         print("Exporting to Excel Files...")
-        
+
         try:
             df.to_excel(targetfile, sheet_name="Averages")
         except:
